@@ -1,0 +1,91 @@
+- name: Nexus bootstrap via Ansible (Vault-secured)
+  hosts: localhost
+  gather_facts: false
+
+  vars_files:
+    - vars.yml
+    - vault.yml   # 🔒 encrypted secrets
+
+  vars:
+    admin_user: admin
+    minikube_ip: "{{ lookup('pipe', 'minikube ip') }}"
+    nexus_ui: "http://{{ minikube_ip }}:{{ nexus_ui_nodeport }}"
+
+  tasks:
+    - name: Get Nexus pod name
+      shell: >
+        kubectl -n {{ namespace }} get pod -l app=nexus
+        -o jsonpath='{.items[0].metadata.name}'
+      register: nexus_pod
+      changed_when: false
+
+    - name: Read initial admin password (if exists)
+      shell: >
+        kubectl -n {{ namespace }} exec -i {{ nexus_pod.stdout }}
+        -- sh -lc "test -f /nexus-data/admin.password && cat /nexus-data/admin.password || true"
+      register: admin_pass
+      changed_when: false
+
+    - name: Wait for Nexus UI
+      uri:
+        url: "{{ nexus_ui }}/"
+        method: GET
+        status_code: 200
+      register: nexus_ready
+      retries: 40
+      delay: 10
+      until: nexus_ready.status == 200
+
+    - name: Change admin password
+      uri:
+        url: "{{ nexus_ui }}/service/rest/v1/security/users/{{ admin_user }}/change-password"
+        method: PUT
+        user: "{{ admin_user }}"
+        password: "{{ admin_pass.stdout | trim }}"
+        force_basic_auth: true
+        headers:
+          Content-Type: "text/plain"
+        body: "{{ new_admin_password }}"
+        status_code: [204, 404, 405]
+      when: change_admin_password
+
+    - name: Verify admin login with new password
+      uri:
+        url: "{{ nexus_ui }}/service/rest/v1/status"
+        method: GET
+        user: "{{ admin_user }}"
+        password: "{{ new_admin_password }}"
+        force_basic_auth: true
+        status_code: 200
+
+    - name: Create docker hosted repo
+      uri:
+        url: "{{ nexus_ui }}/service/rest/v1/repositories/docker/hosted"
+        method: POST
+        user: "{{ admin_user }}"
+        password: "{{ new_admin_password }}"
+        force_basic_auth: true
+        status_code: [201, 400]
+        headers:
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          name: "{{ docker_repo_name }}"
+          online: true
+          storage:
+            blobStoreName: "default"
+            strictContentTypeValidation: true
+            writePolicy: "ALLOW"
+          docker:
+            httpPort: "{{ docker_repo_port }}"
+            forceBasicAuth: true
+            v1Enabled: false
+          cleanup:
+            policyNames: []
+
+    - name: Summary
+      debug:
+        msg: |
+          Nexus UI: {{ nexus_ui }}
+          Admin password rotated via Vault
+          Docker repo '{{ docker_repo_name }}' ready

@@ -1,0 +1,15 @@
+image:
+  repository: toystore
+  tag: dev
+  pullPolicy: IfNotPresent
+
+mysql:
+  serviceName: mysql-mysql
+  port: 3306
+
+secretName: mysql-secret
+
+service:
+  port: 80
+
+imagePullSecret: nexus-regcred

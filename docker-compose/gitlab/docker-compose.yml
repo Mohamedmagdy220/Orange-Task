@@ -1,0 +1,20 @@
+version: "3.8"
+
+services:
+  gitlab:
+    image: gitlab/gitlab-ce:17.7.0-ce.0
+    container_name: gitlab
+    restart: always
+    hostname: gitlab.local
+    environment:
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url 'http://192.168.1.7'
+        gitlab_rails['gitlab_shell_ssh_port'] = 2222
+    ports:
+      - "80:80"
+      - "443:443"
+      - "2222:22"
+    volumes:
+      - ./config:/etc/gitlab
+      - ./logs:/var/log/gitlab
+      - ./data:/var/opt/gitlab

@@ -1,0 +1,15 @@
+image:
+  repository: toystore
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+service:
+  port: 8080
+
+env:
+  db:
+    name: toystore
+    host: mysql-mysql.dev.svc.cluster.local
+    port: 3306
+
+existingSecret: mysql-secret

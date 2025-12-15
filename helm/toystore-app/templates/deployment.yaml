@@ -1,0 +1,37 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: toystore
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: toystore
+  template:
+    metadata:
+      labels:
+        app: toystore
+    spec:
+      containers:
+        - name: toystore
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: toystore-config
+          env:
+            - name: SPRING_DATASOURCE_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secretName }}
+                  key: mysql-user
+            - name: SPRING_DATASOURCE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secretName }}
+                  key: mysql-password
+       
+      imagePullSecrets:
+        - name: {{ .Values.imagePullSecret }}

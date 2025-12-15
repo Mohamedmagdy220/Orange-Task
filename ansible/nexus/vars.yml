@@ -1,0 +1,7 @@
+namespace: build
+nexus_ui_nodeport: 30081
+
+docker_repo_name: docker-hosted
+docker_repo_port: 5000
+
+change_admin_password: true

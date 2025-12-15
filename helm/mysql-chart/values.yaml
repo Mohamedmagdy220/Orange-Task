@@ -1,0 +1,17 @@
+image:
+  repository: mysql
+  tag: "8.0"
+  pullPolicy: IfNotPresent
+
+service:
+  port: 3306
+
+persistence:
+  size: 5Gi
+
+existingSecret: mysql-secret
+secretKeys:
+  rootPassword: mysql-root-password
+  database: mysql-database
+  user: mysql-user
+  password: mysql-password
