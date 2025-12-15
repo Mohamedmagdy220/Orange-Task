@@ -1,0 +1,123 @@
+stages:
+  - checkout
+  - build
+  - image
+  - deploy
+
+variables:
+  APP_PATH: "Toy0Store"
+  IMAGE_NAME: "toystore"
+  HELM_CHART_PATH: "helm/toystore-app"
+
+# 1) Checkout code from GitHub
+checkout_code:
+  stage: checkout
+  image: alpine:3.20
+  script:
+    - apk add --no-cache git
+    - git clone "$GITHUB_REPO" src
+  artifacts:
+    paths:
+      - src/
+    expire_in: 1 hour
+
+# 2) Build spring boot project using Maven
+maven_build:
+  stage: build
+  image: maven:3.9.9-eclipse-temurin-11
+  script:
+    - echo "Listing src directory:"
+    - ls -lah src
+    - cd src/$APP_PATH
+    - mvn -DskipTests clean package
+    - mkdir -p $CI_PROJECT_DIR/dist
+    - cp target/*.jar $CI_PROJECT_DIR/dist/
+    - echo "dist contents:"
+    - ls -lah $CI_PROJECT_DIR/dist   
+  artifacts:
+    paths:
+      - dist/*.jar
+    expire_in: 1 hour
+
+# 3) Create Docker image from JAR + Push to Nexus
+build_and_push:
+  stage: image
+  image:
+    name: gcr.io/kaniko-project/executor:debug
+    entrypoint: [""]
+  script:
+    # Auth to Nexus
+    - mkdir -p /kaniko/.docker
+    - |
+      cat > /kaniko/.docker/config.json <<EOF
+      {
+        "auths": {
+          "${NEXUS_REGISTRY}": {
+            "username": "${NEXUS_USER}",
+            "password": "${NEXUS_PASS}"
+          }
+        }
+      }
+      EOF
+
+    # Build context:  target/ + Dockerfile.runtime
+    - mkdir -p buildctx/target
+    - cp dist/*.jar buildctx/target/
+    - cp Dockerfile buildctx/Dockerfile
+
+    # tag
+    - echo "IMAGE_TAG=$CI_COMMIT_SHORT_SHA" > build.env
+
+    # build + push
+    - /kaniko/executor
+      --context "$CI_PROJECT_DIR/buildctx"
+      --dockerfile "$CI_PROJECT_DIR/buildctx/Dockerfile"
+      --destination "${NEXUS_REGISTRY}/${NEXUS_DOCKER_REPO}/${IMAGE_NAME}:${CI_COMMIT_SHORT_SHA}"
+      --insecure
+
+  artifacts:
+    reports:
+      dotenv: build.env
+
+# 4) Manual deploy: choose dev/test using TARGET_ENV
+deploy_choose_env:
+  stage: deploy
+  image: 
+    name: alpine/helm:3.16.3
+    entrypoint: [""]
+  when: manual
+  script:
+    - apk add --no-cache kubectl ca-certificates
+
+
+    # kubeconfig
+    - printf '%s' "$KUBECONFIG_RAW" > kubeconfig
+    - sed -i 's/\r$//' kubeconfig   
+    - sed -i 's#https://192\.168\.49\.2:8443#https://127.0.0.1:32771#g' kubeconfig
+    - export KUBECONFIG="$CI_PROJECT_DIR/kubeconfig"
+    - kubectl get ns
+    
+    # Debug: 
+    - echo "TARGET_ENV=$TARGET_ENV"
+    - echo "HELM_CHART_PATH=$HELM_CHART_PATH"
+    - echo "IMAGE_TAG=$IMAGE_TAG"
+    - echo "Listing repo root:"
+    - ls -lah
+    - echo "Listing helm folder:"
+    - ls -lah helm || true
+    - echo "Listing chart path:"
+    - ls -lah "$HELM_CHART_PATH" || true
+    
+
+    # validate target env
+    - |
+      if [ -z "${TARGET_ENV}" ]; then
+        echo "ERROR: set TARGET_ENV=dev or TARGET_ENV=test when running this job."
+        exit 1
+      fi
+      case "${TARGET_ENV}" in dev|test) ;; *) echo "TARGET_ENV must be dev or test"; exit 1 ;; esac
+
+    # helm deploy using image from nexus
+    - helm upgrade --install toystore "$HELM_CHART_PATH" -n "$TARGET_ENV" --create-namespace --set image.repository="${NEXUS_REGISTRY}/${NEXUS_DOCKER_REPO}/${IMAGE_NAME}" --set image.tag="${IMAGE_TAG}" --set image.pullPolicy=IfNotPresent
+    - kubectl -n "$TARGET_ENV" rollout status deploy/toystore
+    - kubectl -n "$TARGET_ENV" get pods
